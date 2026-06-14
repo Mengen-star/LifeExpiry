@@ -124,6 +124,15 @@ def add_item(user_id: int, name: str, category: str, expiry_date):
             (user_id, name, category, expiry_date.strftime("%Y-%m-%d"), today_str)
         )
 
+def restore_item(user_id: int, name: str, category: str, expiry_date: str, add_date: str):
+    """撤销删除时恢复物品（不保留原id）"""
+    with sqlite3.connect(DB_NAME) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO inventory (user_id, name, category, expiry_date, add_date) VALUES (?, ?, ?, ?, ?)",
+            (user_id, name, category, expiry_date, add_date)
+        )
+
 def delete_item(item_id: int, user_id: int):
     with sqlite3.connect(DB_NAME) as conn:
         cursor = conn.cursor()
@@ -227,22 +236,98 @@ def login_signup_page():
             st.caption("✨ 你的物资数据只属于你自己，安全隔离存储")
 
 # ==========================================
-# 4. 主应用（登录后）
+# 4. 撤销功能辅助函数
+# ==========================================
+def push_to_undo_stack(deleted_items_info):
+    """
+    将删除的物品信息推入撤销栈。
+    deleted_items_info: list of dict，每个dict包含原物品的字段（name, category, expiry_date, add_date）
+    """
+    if 'undo_stack' not in st.session_state:
+        st.session_state.undo_stack = []
+    # 限制栈最大长度5，避免过多占用内存
+    MAX_UNDO = 5
+    st.session_state.undo_stack.append(deleted_items_info)
+    if len(st.session_state.undo_stack) > MAX_UNDO:
+        st.session_state.undo_stack.pop(0)
+
+def undo_last_delete(user_id: int):
+    """撤销最近一次删除操作"""
+    if 'undo_stack' not in st.session_state or not st.session_state.undo_stack:
+        st.warning("没有可撤销的操作")
+        return False
+    deleted_items = st.session_state.undo_stack.pop()
+    for item in deleted_items:
+        restore_item(
+            user_id,
+            item['name'],
+            item['category'],
+            item['expiry_date'],
+            item['add_date']
+        )
+    return True
+
+# ==========================================
+# 5. 主应用（登录后）
 # ==========================================
 def refresh_user_data():
-    """仅更新 session_state 中的物资数据，不调用 st.rerun()"""
     if 'user_id' in st.session_state:
         st.session_state['df_items'] = load_user_data(st.session_state['user_id'])
 
+def delete_item_with_undo(item_id: int, user_id: int, current_df: pd.DataFrame):
+    """先获取物品完整信息，删除后记录到撤销栈"""
+    row = current_df[current_df['id'] == item_id]
+    if row.empty:
+        return
+    deleted_info = [{
+        'name': row.iloc[0]['name'],
+        'category': row.iloc[0]['category'],
+        'expiry_date': row.iloc[0]['expiry_date'],
+        'add_date': row.iloc[0]['add_date']
+    }]
+    push_to_undo_stack(deleted_info)
+    delete_item(item_id, user_id)
+
+def batch_delete_with_undo(item_ids: list, user_id: int, current_df: pd.DataFrame):
+    """批量删除并记录每个物品信息"""
+    deleted_infos = []
+    for iid in item_ids:
+        row = current_df[current_df['id'] == iid]
+        if not row.empty:
+            deleted_infos.append({
+                'name': row.iloc[0]['name'],
+                'category': row.iloc[0]['category'],
+                'expiry_date': row.iloc[0]['expiry_date'],
+                'add_date': row.iloc[0]['add_date']
+            })
+    if deleted_infos:
+        push_to_undo_stack(deleted_infos)
+        batch_delete_items(item_ids, user_id)
+
 def main_app():
-    # 侧边栏：用户信息 & 入库 & 导出
+    # 初始化撤销栈（如果不存在）
+    if 'undo_stack' not in st.session_state:
+        st.session_state.undo_stack = []
+    
+    # 侧边栏：用户信息 & 入库 & 导出 & 撤销按钮
     with st.sidebar:
         st.header(f"👋 欢迎，{st.session_state['username']}")
-        if st.button("🚪 退出登录", use_container_width=True):
-            for key in ['logged_in', 'user_id', 'username', 'df_items']:
-                if key in st.session_state:
-                    del st.session_state[key]
-            st.rerun()
+        col_undo, col_logout = st.columns(2)
+        with col_undo:
+            if st.button("↩️ 撤销上一步", use_container_width=True):
+                success = undo_last_delete(st.session_state['user_id'])
+                if success:
+                    st.success("已恢复最近删除的物品")
+                    refresh_user_data()
+                    st.rerun()
+                else:
+                    st.info("没有可撤销的操作")
+        with col_logout:
+            if st.button("🚪 退出登录", use_container_width=True):
+                for key in ['logged_in', 'user_id', 'username', 'df_items', 'undo_stack']:
+                    if key in st.session_state:
+                        del st.session_state[key]
+                st.rerun()
         
         st.markdown("---")
         st.header("🚀 智能入库面板")
@@ -277,10 +362,9 @@ def main_app():
                     st.error("请输入物资名称！")
                 else:
                     add_item(st.session_state['user_id'], item_name, item_cat, exp_date)
-                    # 🎈 气球庆祝动画
                     st.balloons()
                     st.success(f"🎉 {item_name} 已成功记入仓库！")
-                    refresh_user_data()   # 刷新数据，页面自动重绘
+                    refresh_user_data()
         
         st.markdown("---")
         st.subheader("📤 数据备份")
@@ -394,9 +478,10 @@ def main_app():
                     """, unsafe_allow_html=True)
                     
                     if st.button(f"🗑️ 消耗/下架", key=f"{tab_name}_del_{row['id']}_{st.session_state['user_id']}"):
-                        delete_item(row['id'], st.session_state['user_id'])
+                        delete_item_with_undo(row['id'], st.session_state['user_id'], st.session_state['df_items'])
                         st.toast(f"已下架: {row['name']}")
                         refresh_user_data()
+                        st.rerun()
                 st.write("")
     
     # Tabs
@@ -425,18 +510,20 @@ def main_app():
                     if st.button("🗑️ 删除选中物资", use_container_width=True):
                         if selected:
                             ids_to_delete = [int(opt.split("|")[0]) for opt in selected]
-                            batch_delete_items(ids_to_delete, st.session_state['user_id'])
+                            batch_delete_with_undo(ids_to_delete, st.session_state['user_id'], st.session_state['df_items'])
                             st.success(f"已删除 {len(ids_to_delete)} 件物资")
                             refresh_user_data()
+                            st.rerun()
                         else:
                             st.warning("请先选择物资")
                 with col_btn2:
                     if st.button("🔥 一键清理已过期/24H内物资", use_container_width=True, type="primary"):
                         expired_ids = df_items[df_items['status_order'].isin([0, 1])]['id'].tolist()
                         if expired_ids:
-                            batch_delete_items(expired_ids, st.session_state['user_id'])
+                            batch_delete_with_undo(expired_ids, st.session_state['user_id'], st.session_state['df_items'])
                             st.success(f"已清理 {len(expired_ids)} 件过期/紧急物资")
                             refresh_user_data()
+                            st.rerun()
                         else:
                             st.info("当前没有需要清理的过期物资")
             else:
@@ -455,7 +542,7 @@ def main_app():
         render_card_flow(df_items[df_items['category'].isin(["💄 美妆护肤", "🏠 日用杂货"])], tab_name="other")
 
 # ==========================================
-# 5. 主入口
+# 6. 主入口
 # ==========================================
 def main():
     init_db()
