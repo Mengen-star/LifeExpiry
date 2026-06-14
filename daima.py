@@ -53,10 +53,8 @@ st.markdown("""
 DB_NAME = "life_expiry.db"
 
 def init_db():
-    """初始化数据库：users 表 + inventory 表（带 user_id）"""
     with sqlite3.connect(DB_NAME) as conn:
         cursor = conn.cursor()
-        # 用户表
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,7 +63,6 @@ def init_db():
                 created_at TEXT NOT NULL
             )
         """)
-        # 物资表，增加 user_id 外键
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS inventory (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -80,11 +77,9 @@ def init_db():
         conn.commit()
 
 def hash_password(password: str) -> str:
-    """简单哈希（课程作业可用，实际应用需加盐）"""
     return hashlib.sha256(password.encode()).hexdigest()
 
 def add_user(username: str, password: str) -> bool:
-    """注册新用户，返回是否成功"""
     try:
         with sqlite3.connect(DB_NAME) as conn:
             cursor = conn.cursor()
@@ -98,7 +93,6 @@ def add_user(username: str, password: str) -> bool:
         return False
 
 def authenticate_user(username: str, password: str):
-    """验证登录，返回 user_id 或 None"""
     with sqlite3.connect(DB_NAME) as conn:
         cursor = conn.cursor()
         cursor.execute(
@@ -111,7 +105,6 @@ def authenticate_user(username: str, password: str):
     return None
 
 def get_user_items(user_id: int):
-    """获取当前用户的所有物资"""
     with sqlite3.connect(DB_NAME) as conn:
         df = pd.read_sql_query(
             "SELECT * FROM inventory WHERE user_id = ?",
@@ -132,7 +125,6 @@ def add_item(user_id: int, name: str, category: str, expiry_date):
         )
 
 def delete_item(item_id: int, user_id: int):
-    """删除物资（确保只能删除自己的）"""
     with sqlite3.connect(DB_NAME) as conn:
         cursor = conn.cursor()
         cursor.execute(
@@ -149,7 +141,6 @@ def delete_expired_items(df: pd.DataFrame, user_id: int):
     batch_delete_items(danger_ids, user_id)
 
 def load_user_data(user_id: int):
-    """读取当前用户数据并计算状态"""
     df = get_user_items(user_id)
     if df.empty:
         return pd.DataFrame(columns=['id', 'name', 'category', 'expiry_date', 'add_date', 'days_left', 'status', 'status_order'])
@@ -188,7 +179,6 @@ def load_user_data(user_id: int):
 # 3. 登录/注册 UI
 # ==========================================
 def login_signup_page():
-    """显示登录/注册界面，返回是否登录成功及user_id"""
     with st.container():
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
@@ -214,7 +204,7 @@ def login_signup_page():
                                 st.session_state['username'] = username
                                 st.rerun()
                             else:
-                                st.error("用户名或密码错误")   # 缩进已修复
+                                st.error("用户名或密码错误")
             
             with tab2:
                 with st.form("reg_form"):
@@ -240,7 +230,7 @@ def login_signup_page():
 # 4. 主应用（登录后）
 # ==========================================
 def refresh_user_data():
-    """刷新当前用户的物资数据到 session_state"""
+    """仅更新 session_state 中的物资数据，不调用 st.rerun()"""
     if 'user_id' in st.session_state:
         st.session_state['df_items'] = load_user_data(st.session_state['user_id'])
 
@@ -258,7 +248,6 @@ def main_app():
         st.header("🚀 智能入库面板")
         st.caption("全屋物资一键登记，自动推算保质期")
         
-        # 分类及保质期建议
         CATEGORY_SUGGESTIONS = {
             "🍿 零食饮料": 180,
             "💊 医药急救": 365,
@@ -288,9 +277,10 @@ def main_app():
                     st.error("请输入物资名称！")
                 else:
                     add_item(st.session_state['user_id'], item_name, item_cat, exp_date)
+                    # 🎈 气球庆祝动画
+                    st.balloons()
                     st.success(f"🎉 {item_name} 已成功记入仓库！")
-                    refresh_user_data()
-                    st.rerun()
+                    refresh_user_data()   # 刷新数据，页面自动重绘
         
         st.markdown("---")
         st.subheader("📤 数据备份")
@@ -407,7 +397,6 @@ def main_app():
                         delete_item(row['id'], st.session_state['user_id'])
                         st.toast(f"已下架: {row['name']}")
                         refresh_user_data()
-                        st.rerun()
                 st.write("")
     
     # Tabs
@@ -439,7 +428,6 @@ def main_app():
                             batch_delete_items(ids_to_delete, st.session_state['user_id'])
                             st.success(f"已删除 {len(ids_to_delete)} 件物资")
                             refresh_user_data()
-                            st.rerun()
                         else:
                             st.warning("请先选择物资")
                 with col_btn2:
@@ -449,7 +437,6 @@ def main_app():
                             batch_delete_items(expired_ids, st.session_state['user_id'])
                             st.success(f"已清理 {len(expired_ids)} 件过期/紧急物资")
                             refresh_user_data()
-                            st.rerun()
                         else:
                             st.info("当前没有需要清理的过期物资")
             else:
@@ -468,7 +455,7 @@ def main_app():
         render_card_flow(df_items[df_items['category'].isin(["💄 美妆护肤", "🏠 日用杂货"])], tab_name="other")
 
 # ==========================================
-# 5. 主入口：根据登录状态展示不同页面
+# 5. 主入口
 # ==========================================
 def main():
     init_db()
