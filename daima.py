@@ -125,7 +125,6 @@ def add_item(user_id: int, name: str, category: str, expiry_date):
         )
 
 def restore_item(user_id: int, name: str, category: str, expiry_date: str, add_date: str):
-    """撤销删除时恢复物品（不保留原id）"""
     with sqlite3.connect(DB_NAME) as conn:
         cursor = conn.cursor()
         cursor.execute(
@@ -239,20 +238,14 @@ def login_signup_page():
 # 4. 撤销功能辅助函数
 # ==========================================
 def push_to_undo_stack(deleted_items_info):
-    """
-    将删除的物品信息推入撤销栈。
-    deleted_items_info: list of dict，每个dict包含原物品的字段（name, category, expiry_date, add_date）
-    """
     if 'undo_stack' not in st.session_state:
         st.session_state.undo_stack = []
-    # 限制栈最大长度5，避免过多占用内存
     MAX_UNDO = 5
     st.session_state.undo_stack.append(deleted_items_info)
     if len(st.session_state.undo_stack) > MAX_UNDO:
         st.session_state.undo_stack.pop(0)
 
 def undo_last_delete(user_id: int):
-    """撤销最近一次删除操作"""
     if 'undo_stack' not in st.session_state or not st.session_state.undo_stack:
         st.warning("没有可撤销的操作")
         return False
@@ -275,7 +268,6 @@ def refresh_user_data():
         st.session_state['df_items'] = load_user_data(st.session_state['user_id'])
 
 def delete_item_with_undo(item_id: int, user_id: int, current_df: pd.DataFrame):
-    """先获取物品完整信息，删除后记录到撤销栈"""
     row = current_df[current_df['id'] == item_id]
     if row.empty:
         return
@@ -289,7 +281,6 @@ def delete_item_with_undo(item_id: int, user_id: int, current_df: pd.DataFrame):
     delete_item(item_id, user_id)
 
 def batch_delete_with_undo(item_ids: list, user_id: int, current_df: pd.DataFrame):
-    """批量删除并记录每个物品信息"""
     deleted_infos = []
     for iid in item_ids:
         row = current_df[current_df['id'] == iid]
@@ -305,29 +296,29 @@ def batch_delete_with_undo(item_ids: list, user_id: int, current_df: pd.DataFram
         batch_delete_items(item_ids, user_id)
 
 def main_app():
-    # 初始化撤销栈（如果不存在）
     if 'undo_stack' not in st.session_state:
         st.session_state.undo_stack = []
     
-    # 侧边栏：用户信息 & 入库 & 导出 & 撤销按钮
+    # 侧边栏：用户信息 & 操作按钮 & 入库面板
     with st.sidebar:
         st.header(f"👋 欢迎，{st.session_state['username']}")
-        col_undo, col_logout = st.columns(2)
-        with col_undo:
-            if st.button("↩️ 撤销上一步", use_container_width=True):
-                success = undo_last_delete(st.session_state['user_id'])
-                if success:
-                    st.success("已恢复最近删除的物品")
-                    refresh_user_data()
-                    st.rerun()
-                else:
-                    st.info("没有可撤销的操作")
-        with col_logout:
-            if st.button("🚪 退出登录", use_container_width=True):
-                for key in ['logged_in', 'user_id', 'username', 'df_items', 'undo_stack']:
-                    if key in st.session_state:
-                        del st.session_state[key]
+        
+        # 退出登录按钮
+        if st.button("🚪 退出登录", use_container_width=True):
+            for key in ['logged_in', 'user_id', 'username', 'df_items', 'undo_stack']:
+                if key in st.session_state:
+                    del st.session_state[key]
+            st.rerun()
+        
+        # 撤销上一步按钮（放在退出登录下方）
+        if st.button("↩️ 撤销上一步", use_container_width=True):
+            success = undo_last_delete(st.session_state['user_id'])
+            if success:
+                st.success("已恢复最近删除的物品")
+                refresh_user_data()
                 st.rerun()
+            else:
+                st.info("没有可撤销的操作")
         
         st.markdown("---")
         st.header("🚀 智能入库面板")
