@@ -1,6 +1,2 @@
-<<<<<<< HEAD
 streamlit>=1.28.0
-=======
-streamlit>=1.28.0
->>>>>>> 5690bda564c6a19e9716011213bb960ded54f8de
 pandas>=1.5.0
